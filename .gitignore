@@ -1,0 +1,21 @@
+# Конкретные файлы
+public/filesys_open.php
+public/filesys_ops.php
+public/filesys.php
+public/globals.css
+public/index.html
+public/main.js
+public/metrics.php
+public/watch.php
+public/.htaccess
+public/style.css
+database_TEMP.txt
+KO12.sql
+src/lib/.env
+
+# Целые папки
+filesys/
+.Trash-1000/
+public/images/
+public/Player/
+public/PJPEG/

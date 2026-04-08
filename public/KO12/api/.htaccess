@@ -1,0 +1,8 @@
+# Запрещаем просмотр списка файлов
+Options -Indexes
+
+# Разрешаем запросы только с домена(для работы API)
+SetEnvIf Referer "^https://trsfl.ru" local_referal
+Order deny,allow
+Deny from all
+Allow from env=local_referal
