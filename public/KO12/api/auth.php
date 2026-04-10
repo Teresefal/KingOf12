@@ -30,10 +30,22 @@ if ($action === 'register') {
         $passwordHash = hashPassword($password);
         $result = callFunction('register_user', [$username, $passwordHash, $name]);
 
-        echo json_encode([
-            'success' => (bool)($result[0]['success'] ?? false),
-            'message' => $result[0]['message'] ?? 'Ошибка регистрации'
-        ]);
+        $success = (bool)($result[0]['success'] ?? false);
+        if ($success) {
+            // Авто-авторизация сразу после регистрации
+            $_SESSION['user_login'] = $username;
+            $_SESSION['user_name']  = $name;
+            echo json_encode([
+                'success'  => true,
+                'message'  => $result[0]['message'] ?? 'Регистрация успешна',
+                'redirect' => 'lobby.php'
+            ]);
+        } else {
+            echo json_encode([
+                'success' => false,
+                'message' => $result[0]['message'] ?? 'Ошибка регистрации'
+            ]);
+        }
     } catch (Exception $e) {
         error_log("Registration error: " . $e->getMessage());
         echo json_encode(['success' => false, 'message' => 'Ошибка регистрации. Попробуйте позже.']);

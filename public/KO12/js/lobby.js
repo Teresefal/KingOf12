@@ -141,3 +141,26 @@ async function logout() {
     });
     window.location.href = 'index.php';
 }
+
+(function startLobbyHeartbeat() {
+    async function pingMySession() {
+        // Ищем кнопку "Вернуться" или "Войти в игру" — значит мы в сессии
+        const myRow = document.querySelector('tr.my-session');
+        if (!myRow) return;
+        const btn = myRow.querySelector('button[onclick]');
+        if (!btn) return;
+        const m = btn.getAttribute('onclick').match(/\d+/);
+        if (!m) return;
+        const sessionId = parseInt(m[0]);
+        try {
+            await fetch('api/heartbeat.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+        } catch (_) {}
+    }
+    // Первый пинг через 5 сек после загрузки, затем каждые 30 сек
+    setTimeout(pingMySession, 5000);
+    setInterval(pingMySession, 30000);
+})();

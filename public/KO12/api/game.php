@@ -85,7 +85,12 @@ switch ($action) {
 
 function getGameState(int $sessionId, string $userLogin): array {
     $session = Database::fetchOne(
-        "SELECT id_session, session_name, phase_length, status, max_players, current_round_number
+        "SELECT id_session, session_name, phase_length, status, max_players,
+                current_round_number,
+                CASE
+                    WHEN lobby_ready_at IS NULL THEN NULL
+                    ELSE GREATEST(0, 30 - EXTRACT(EPOCH FROM (NOW() - lobby_ready_at))::INT)
+                END AS lobby_countdown_sec
          FROM Sessions WHERE id_session = ?",
         [$sessionId]
     );

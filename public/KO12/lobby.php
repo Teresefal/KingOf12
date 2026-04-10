@@ -27,25 +27,34 @@ $userLogin = $_SESSION['user_login'];
     <div class="container">
         <div class="header">
             <h1>Лобби</h1>
-            <div>
-                <a href="ko12_rules.pdf" target="_blank">правила игры</a>
+            <div>Привет, <?= htmlspecialchars($userName) ?>! 
                 <button onclick="logout()">Выйти</button>
             </div>
         </div>
         
         <div class="lobby-content">
-            <!-- Создание новой игры -->
-            <div class="create-game">
-                <h2>Создать новую игру</h2>
-                <form onsubmit="createGame(event)">
-                    <input type="text" id="game-name" placeholder="Название игры" required>
-                    <select id="max-players">
-                        <option value="2">2 игрока</option>
-                        <option value="3" selected>3 игрока</option>
-                        <option value="4">4 игрока</option>
-                    </select>
-                    <button type="submit">Создать</button>
-                </form>
+            <div class="left-column">
+                <!-- Создание новой игры -->
+                <div class="create-game">
+                    <img src="images/ko12.png" alt="Дюжина Короля" style="display: block; margin: 0 auto; width: 256px;">
+                    <h2>Создать новую игру</h2>
+                    <form onsubmit="createGame(event)">
+                        <input type="text" id="game-name" placeholder="Название игры" required>
+                        <select id="max-players">
+                            <option value="2">2 игрока</option>
+                            <option value="3" selected>3 игрока</option>
+                            <option value="4">4 игрока</option>
+                        </select>
+                        <button type="submit">Создать</button>
+                    </form>
+                </div>
+                
+                <!-- Правила игры -->
+                <div class="rules-panel">
+                    <a href="ko12_rules.pdf" target="_blank">
+                        <img src="images/Rules.pjpeg" alt="Правила игры">
+                    </a>
+                </div>
             </div>
             
             <!-- Список доступных игр -->

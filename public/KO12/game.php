@@ -86,17 +86,30 @@ try {
         </div>
     </div>
 
-    <!-- Кнопка старта (только владелец) -->
-    <?php if ($isOwner): ?>
+    <!-- Обратный отсчёт / статус лобби (виден всем) -->
     <div id="start-game-container" class="start-game-container" style="display:none;">
-        <button id="start-game-btn" onclick="startGame()" class="btn-primary btn-large">
-            Начать игру
-        </button>
-        <p class="hint">Минимум 2 игрока</p>
+        <div id="lobby-status-content"></div>
     </div>
-    <?php endif; ?>
 
 </div><!-- .game-container -->
+
+<!-- Попап подтверждения выбора карты -->
+<div id="card-confirm-popup" class="card-confirm-popup" style="display:none;">
+    <div class="card-confirm-inner">
+        <div class="card-confirm-header">
+            <span id="card-confirm-icon" class="card-confirm-icon"></span>
+            <span id="card-confirm-name" class="card-confirm-name"></span>
+        </div>
+        <div class="card-confirm-timer-track">
+            <div id="card-confirm-fill" class="card-confirm-fill"></div>
+        </div>
+        <p class="card-confirm-hint">Автоподтверждение через <span id="card-confirm-sec">5</span> сек</p>
+        <div class="card-confirm-actions">
+            <button onclick="confirmCardSelection()" class="btn-card-confirm">✓ Сыграть</button>
+            <button onclick="cancelCardSelection()" class="btn-card-cancel">✗ Отмена</button>
+        </div>
+    </div>
+</div>
 
 <!-- Модальное окно результатов -->
 <div id="result-modal" class="modal" style="display:none;">

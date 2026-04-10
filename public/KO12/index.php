@@ -126,8 +126,7 @@ if (isset($_SESSION['user_login'])) {
                 const data = await response.json();
                 
                 if (data.success) {
-                    alert('Регистрация успешна! Теперь войдите.');
-                    showTab('login');
+                    window.location.href = data.redirect || 'lobby.php';
                 } else {
                     document.getElementById('register-error').textContent = data.message;
                 }

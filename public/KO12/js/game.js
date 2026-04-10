@@ -21,8 +21,22 @@ const CARD_ICONS = {
 
 let wizardModalOpen = false;
 
-// PostgreSQL JSON возвращает числа как строки; PHP вставляет числа.
-// "5" === 5 → false, поэтому используем sameId везде.
+// ── Серверно-синхронизированный таймер лобби ─────────────────────────────────
+// Сервер сам считает сколько секунд осталось и присылает lobby_countdown_sec.
+// Клиент только интерполирует между poll-ами через requestAnimationFrame.
+const LOBBY_COUNTDOWN_SEC = 30;
+let lobbyCountdownAtPoll  = null; // секунды с сервера на момент последнего poll
+let lobbyCountdownFetchTs = null; // Date.now() когда получили это значение
+let lobbyRafHandle        = null; // rAF для плавного обновления полоски
+
+// ── Попап подтверждения карты ─────────────────────────────────────────────────
+const CARD_CONFIRM_SEC = 5;
+let pendingCardId    = null;
+let pendingCardName  = null;
+let cardConfirmRaf   = null;
+let cardConfirmStart = null; // Date.now() старта confirm
+
+// sameId: PostgreSQL возвращает числа как строки
 const sameId = (a, b) => parseInt(a, 10) === parseInt(b, 10);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,10 +48,23 @@ function startPolling() {
     loadGameLog();
     pollInterval = setInterval(loadGameState, 2000);
     setInterval(loadGameLog, 4000);
+    sendHeartbeat();
+    setInterval(sendHeartbeat, 30000);
 }
 
 function stopPolling() {
     if (pollInterval) clearInterval(pollInterval);
+}
+
+async function sendHeartbeat() {
+    if (!SESSION_ID) return;
+    try {
+        await fetch('api/heartbeat.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: SESSION_ID })
+        });
+    } catch (_) {}
 }
 
 async function loadGameState() {
@@ -144,7 +171,7 @@ function updatePlayers() {
 }
 
 function updateYourHand() {
-    const hand    = document.getElementById('your-hand');
+    const hand     = document.getElementById('your-hand');
     const statusEl = document.getElementById('hand-status');
 
     if (!gameState.your_cards || gameState.your_cards.length === 0) {
@@ -171,7 +198,10 @@ function updateYourHand() {
         const isSelHP = selectedCard === card.card_id;
         const imgSrc  = `images/cards/${encodeURIComponent(card.card_name)}.png`;
         const icon    = CARD_ICONS[card.card_name] || '🂠';
-        const click   = (canSelect && avail) ? `onclick="selectCard(${card.card_id},'${card.card_name}')"` : '';
+        // Передаём event для позиционирования попапа рядом с картой
+        const click   = (canSelect && avail)
+            ? `onclick="selectCard(event,${card.card_id},'${card.card_name}')"`
+            : '';
         const cls     = ['card', !avail?'card-disabled':'', isSelHP?'card-selected-hand':''].filter(Boolean).join(' ');
 
         html += `
@@ -215,29 +245,187 @@ function updateDiceArea() {
     area.innerHTML = html;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// СТАРТ ИГРЫ — серверно-синхронизированный countdown
+// ─────────────────────────────────────────────────────────────────────────────
+
 function updateStartButton() {
-    if (!IS_OWNER) return;
     const container = document.getElementById('start-game-container');
-    const btn       = document.getElementById('start-game-btn');
-    if (!container || !btn) return;
-    if (gameState.session.status === 'waiting') {
-        container.style.display = 'block';
-        btn.disabled = gameState.players.length < 2;
-    } else {
+    const content   = document.getElementById('lobby-status-content');
+    if (!container || !content) return;
+
+    if (gameState.session.status !== 'waiting') {
         container.style.display = 'none';
+        cancelAnimationFrame(lobbyRafHandle);
+        lobbyCountdownAtPoll = lobbyCountdownFetchTs = null;
+        return;
     }
+
+    container.style.display = 'block';
+    const count            = gameState.players.length;
+    const max              = gameState.session.max_players;
+    const countdownFromSrv = gameState.session.lobby_countdown_sec;
+
+    if (count < 2 || countdownFromSrv === null || countdownFromSrv === undefined) {
+        cancelAnimationFrame(lobbyRafHandle);
+        lobbyCountdownAtPoll = null;
+        content.innerHTML = `
+            <p class="countdown-waiting">Ожидание игроков…</p>
+            <p class="hint">${count} из ${max} — нужно минимум 2</p>`;
+        return;
+    }
+
+    // Обновляем серверное значение, но структуру HTML рендерим только один раз
+    lobbyCountdownAtPoll  = parseInt(countdownFromSrv, 10);
+    lobbyCountdownFetchTs = Date.now();
+
+    // Рендерим структуру только если её ещё нет — кнопка должна жить постоянно
+    if (!document.getElementById('lobby-countdown-sec')) {
+        content.innerHTML = `
+            <p class="countdown-label">Игра начнётся через <strong id="lobby-countdown-sec"></strong> сек</p>
+            <div class="countdown-track">
+                <div class="countdown-fill" id="lobby-countdown-fill"></div>
+            </div>
+            <p class="hint">${count} из ${max} игроков в комнате</p>
+            ${IS_OWNER
+                ? `<button id="lobby-start-btn" onclick="startGame()" class="btn-primary btn-start-now">Начать сейчас</button>`
+                : ''}`;
+    }
+
+    cancelAnimationFrame(lobbyRafHandle);
+    tickLobbyCountdown();
+}
+
+function tickLobbyCountdown() {
+    const secEl = document.getElementById('lobby-countdown-sec');
+    const fill  = document.getElementById('lobby-countdown-fill');
+    if (!secEl || lobbyCountdownAtPoll === null) return;
+
+    const elapsed   = (Date.now() - lobbyCountdownFetchTs) / 1000;
+    const remaining = Math.max(0, lobbyCountdownAtPoll - elapsed);
+    const pct       = (remaining / LOBBY_COUNTDOWN_SEC) * 100;
+
+    secEl.textContent  = Math.ceil(remaining);
+    if (fill) fill.style.width = pct + '%';
+
+    if (remaining <= 0) {
+        if (IS_OWNER) startGame(true);
+        return;
+    }
+
+    lobbyRafHandle = requestAnimationFrame(tickLobbyCountdown);
+}
+
+async function startGame(auto = false) {
+    if (!IS_OWNER) return;
+    try {
+        const res  = await fetch('api/game.php', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:'start_game', session_id:SESSION_ID})
+        });
+        const data = await res.json();
+        if (data.success) { loadGameState(); setTimeout(loadGameLog, 800); }
+        else if (!auto) alert('Ошибка: ' + data.message);
+    } catch(e) { if (!auto) alert('Ошибка запуска'); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ВЫБОР КАРТЫ
+// ВЫБОР КАРТЫ — попап рядом с картой
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function selectCard(cardId, cardName) {
+function selectCard(event, cardId, cardName) {
     if (selectedCard === cardId) { selectedCard = null; updateYourHand(); return; }
+    // Снимаем координаты ДО перерисовки — после updateYourHand элемент уничтожается
+    const cardRect = event.currentTarget.getBoundingClientRect();
     selectedCard = cardId;
     updateYourHand();
+    showCardConfirmPopup(cardRect, cardId, cardName);
+}
 
-    if (!confirm(`Сыграть карту «${cardName}»?`)) { selectedCard = null; updateYourHand(); return; }
+// ─────────────────────────────────────────────────────────────────────────────
+// ПОПАП ПОДТВЕРЖДЕНИЯ КАРТЫ
+// ─────────────────────────────────────────────────────────────────────────────
+
+function showCardConfirmPopup(cardRect, cardId, cardName) {
+    pendingCardId    = cardId;
+    pendingCardName  = cardName;
+    cardConfirmStart = Date.now();
+
+    document.getElementById('card-confirm-icon').textContent = CARD_ICONS[cardName] || '🂠';
+    document.getElementById('card-confirm-name').textContent = cardName;
+
+    const popup = document.getElementById('card-confirm-popup');
+    popup.style.display = 'flex';
+    // cardRect — уже снятый DOMRect, элемент может быть уничтожен
+    positionConfirmPopup(popup, cardRect);
+
+    cancelAnimationFrame(cardConfirmRaf);
+    tickCardConfirm();
+}
+
+function positionConfirmPopup(popup, cardRect) {
+    const isMobile = window.innerWidth <= 640;
+
+    if (isMobile) {
+        // Мобильный: внизу экрана по центру
+        popup.style.position  = 'fixed';
+        popup.style.left      = '50%';
+        popup.style.top       = 'auto';
+        popup.style.bottom    = '16px';
+        popup.style.transform = 'translateX(-50%)';
+        return;
+    }
+
+    // Десктоп: под картой.
+    // Центрируем горизонтально через transform — не нужно знать ширину попапа.
+    // Якорь left = центр карты, translateX(-50%) выравнивает попап по центру.
+    const gap = 10;
+
+    const anchorLeft = cardRect.left + cardRect.width / 2;
+    let   top        = cardRect.bottom + gap;
+
+    // Грубая оценка высоты попапа (~160px) чтобы проверить выход за экран снизу
+    const POPUP_H_EST = 170;
+    if (top + POPUP_H_EST > window.innerHeight - 8) {
+        top = cardRect.top - POPUP_H_EST - gap;
+    }
+
+    popup.style.position  = 'fixed';
+    popup.style.left      = anchorLeft + 'px';
+    popup.style.top       = top + 'px';
+    popup.style.bottom    = 'auto';
+    // translateX(-50%) центрирует, clamp не даём выйти за края через CSS max-width
+    popup.style.transform = 'translateX(-50%)';
+}
+
+function tickCardConfirm() {
+    const fill      = document.getElementById('card-confirm-fill');
+    const secEl     = document.getElementById('card-confirm-sec');
+    const elapsed   = (Date.now() - cardConfirmStart) / 1000;
+    const remaining = Math.max(0, CARD_CONFIRM_SEC - elapsed);
+
+    if (fill)  fill.style.width  = (remaining / CARD_CONFIRM_SEC * 100) + '%';
+    if (secEl) secEl.textContent = Math.ceil(remaining);
+
+    if (remaining <= 0) { confirmCardSelection(); return; }
+    cardConfirmRaf = requestAnimationFrame(tickCardConfirm);
+}
+
+function cancelCardSelection() {
+    cancelAnimationFrame(cardConfirmRaf);
+    document.getElementById('card-confirm-popup').style.display = 'none';
+    pendingCardId = pendingCardName = null;
+    selectedCard  = null;
+    updateYourHand();
+}
+
+async function confirmCardSelection() {
+    cancelAnimationFrame(cardConfirmRaf);
+    document.getElementById('card-confirm-popup').style.display = 'none';
+
+    const cardId = pendingCardId;
+    pendingCardId = pendingCardName = null;
+    if (!cardId) return;
 
     try {
         const res  = await fetch('api/game.php', {
@@ -253,28 +441,16 @@ async function selectCard(cardId, cardName) {
             alert('Ошибка: ' + data.message);
             updateYourHand();
         }
-    } catch(e) { alert('Ошибка выбора карты'); selectedCard=null; updateYourHand(); }
+    } catch(e) { alert('Ошибка выбора карты'); selectedCard = null; updateYourHand(); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // СТАРТ / ВЫХОД
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function startGame() {
-    if (!IS_OWNER || !confirm('Начать игру?')) return;
-    try {
-        const res  = await fetch('api/game.php', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({action:'start_game',session_id:SESSION_ID})
-        });
-        const data = await res.json();
-        if (data.success) { loadGameState(); setTimeout(loadGameLog, 800); }
-        else alert('Ошибка: ' + data.message);
-    } catch(e) { alert('Ошибка запуска'); }
-}
-
 async function leaveGame() {
     if (!confirm('Покинуть игру?')) return;
+    cancelCardSelection(); // закрываем попап если открыт
     if (gameState?.session?.status === 'waiting') {
         try {
             await fetch('api/sessions.php', {

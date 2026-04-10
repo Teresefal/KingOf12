@@ -95,6 +95,17 @@ if ($action === 'create') {
         $result = callFunction('accept_game_invite', [$userLogin, $sessionId]);
 
         if ($result && $result[0]['accept_game_invite']) {
+            // Устанавливаем lobby_ready_at если теперь >= 2 игроков и ещё не установлен
+            $cnt = Database::fetchOne(
+                "SELECT COUNT(*) AS cnt FROM Players WHERE id_session = ?", [$sessionId]
+            );
+            if ((int)$cnt['cnt'] >= 2) {
+                Database::execute(
+                    "UPDATE Sessions SET lobby_ready_at = COALESCE(lobby_ready_at, NOW())
+                     WHERE id_session = ? AND status = 'waiting'",
+                    [$sessionId]
+                );
+            }
             echo json_encode(['success' => true, 'session_id' => $sessionId]);
         } else {
             echo json_encode(['success' => false, 'message' => 'Не удалось присоединиться']);
@@ -111,6 +122,20 @@ if ($action === 'create') {
     try {
         $result = callFunction('leave_session', [$userLogin, $sessionId]);
         $status = $result[0]['leave_session'] ?? 'error';
+
+        // Если игрок ушёл из ожидающей сессии — пересчитываем lobby_ready_at
+        if (in_array($status, ['left', 'disbanded'], true)) {
+            $cnt = Database::fetchOne(
+                "SELECT COUNT(*) AS cnt FROM Players WHERE id_session = ?", [$sessionId]
+            );
+            if ((int)($cnt['cnt'] ?? 0) < 2) {
+                Database::execute(
+                    "UPDATE Sessions SET lobby_ready_at = NULL
+                     WHERE id_session = ? AND status = 'waiting'",
+                    [$sessionId]
+                );
+            }
+        }
 
         if ($status === 'disbanded')     echo json_encode(['success'=>true,'disbanded'=>true, 'message'=>'Лобби закрыто']);
         elseif ($status === 'left')      echo json_encode(['success'=>true,'disbanded'=>false,'message'=>'Вы покинули лобби']);
