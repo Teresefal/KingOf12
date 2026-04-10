@@ -1,141 +1,124 @@
-# Документация Дюжина Короля
+# Дюжина Короля — KO12
 
-## Структура проекта:<br>
+Веб-реализация настольной игры **«Дюжина Короля»** (King of 12). Игроки бросают 12-гранный кубик и разыгрывают карты с уникальными эффектами, чтобы выиграть раунды и занять трон.
 
-├ src/lib/database.php<br>
-├ includes/<br>
-│ └ db.php           # Подключение к БД<br>
-│ ├ .env             # Данные для подключения<br>
-├ public/<br>
-│ ├ index.php        # Главная страница (вход/регистрация)<br>
-│ ├ lobby.php        # Лобби (список игр)<br>
-│ ├ game.php         # Игровая комната<br>
-│ ├ css/<br>
-│ │ └ style.css<br>
-│ ├ api/<br>
-│ │ ├ .htaccess      # для предотвращения нежеланного просмотра файлов<br>
-│ │ ├ auth.php       # Регистрация/вход<br>
-│ │ ├ sessions.php   # Создание/получение сессий<br>
-│ │ └ game.php       # Игровая логика<br>
-│ │ ├ js/<br>
-│ │ │ ├ lobby.js<br>
-│ │ │ └ game.js<br>
-│ │ └ images/<br>
-│ │ │ ├ cards/       # Изображения карт<br>
-
+**Стек:** PHP 8 · PostgreSQL 13 · Vanilla JS · CSS3
 
 ---
 
+## Структура проекта
 
-# API
-**Base URL:** `https://trsfl.ru/KO12`  
-**Content-Type:** `application/json` (все запросы и ответы)  
-**Авторизация:** сессионные cookie (PHP session). Все эндпоинты кроме `auth` требуют активной сессии.
-
----
-
-## Общий формат ответа
-
-Все ответы возвращают JSON-объект. Поле `success` всегда присутствует:
-
-```json
-{ "success": true, ... }
-{ "success": false, "message": "Описание ошибки" }
+```
+├── src/lib/database.php       # PDO-обёртка (Singleton)
+├── includes/
+│   ├── db.php                 # Вспомогательные функции (callFunction, callProcedure и др.)
+│   └── .env                   # Параметры подключения к БД (не в репозитории)
+└── public/KO12/
+    ├── index.php              # Главная страница (вход / регистрация)
+    ├── lobby.php              # Лобби (список игр)
+    ├── game.php               # Игровая комната
+    ├── css/style.css
+    ├── js/
+    │   ├── game.js
+    │   └── lobby.js
+    ├── images/cards/          # PNG-изображения карт
+    └── api/
+        ├── auth.php           # Регистрация / вход / выход
+        ├── sessions.php       # Создание и управление сессиями
+        ├── game.php           # Игровая логика
+        └── heartbeat.php      # Поддержание присутствия игрока
 ```
 
 ---
 
-## 1. Аутентификация
+## Игровой процесс
 
-### `POST /api/auth.php`
+### Лобби
 
-#### 1.1 Регистрация
+- После **регистрации** пользователь автоматически авторизуется и попадает в лобби.
+- Хост создаёт комнату (2–4 игрока), остальные присоединяются.
+- Как только наберётся **минимум 2 игрока**, запускается **обратный отсчёт 30 секунд** (синхронизируется по серверному времени — `lobby_ready_at` в БД).
+- Хост видит кнопку **«Начать сейчас»** и может запустить игру досрочно.
+- Неактивные игроки удаляются через 90 секунд (heartbeat каждые 30 сек).
 
-**Запрос:**
-```json
-{
-  "action": "register",
-  "username": "ivan",
-  "name": "Иван",
-  "password": "securepass123"
-}
-```
+### Раунд
 
-| Поле | Тип | Ограничения |
-|------|-----|-------------|
-| `username` | string | макс. 64 символа, уникальный |
-| `name` | string | макс. 32 символа |
-| `password` | string | мин. 8 символов |
+Каждый раунд состоит из нескольких **розыгрышей**:
 
-**Успешный ответ:**
-```json
-{
-  "success": true,
-  "message": "Пользователь успешно зарегистрирован"
-}
-```
+1. Каждый игрок выбирает карту из руки (попап с таймером 5 сек).
+2. Карты с дубликатами отменяются.
+3. Применяются эффекты карт в порядке приоритета.
+4. Сравниваются финальные значения кубиков; совпадающие значения отменяются.
+5. Победитель розыгрыша получает очко; использованные карты уходят в сброс.
+6. Раунд завершается, когда у кого-то ≥ 8 очков или у кого-то осталась 1 карта.
+7. Победитель раунда кладёт одну карту под кубик. При ничьей очки сбрасываются.
 
-**Ошибки:**
-```json
-{ "success": false, "message": "Все поля обязательны" }
-{ "success": false, "message": "Пароль должен содержать не менее 8 символов" }
-{ "success": false, "message": "Логин или имя слишком длинные" }
-```
+**Победа в игре** — первый игрок с **2 картами под кубиком**.
 
----
+### Карты
 
-#### 1.2 Вход
-
-**Запрос:**
-```json
-{
-  "action": "login",
-  "username": "ivan",
-  "password": "securepass123"
-}
-```
-
-**Успешный ответ** (устанавливает session cookie):
-```json
-{
-  "success": true,
-  "message": "Вход выполнен",
-  "user": {
-    "login": "ivan",
-    "name": "Иван"
-  }
-}
-```
-
-**Ошибки:**
-```json
-{ "success": false, "message": "Введите логин и пароль" }
-{ "success": false, "message": "Неверный логин или пароль" }
-```
+| Карта | Эффект |
+|---|---|
+| АЛХИМИК | Значение кубика × 2 |
+| РОБОТ | Значение кубика + 7 |
+| ПАРАЗИТ | Значение кубика − 7 |
+| ОБОРОТЕНЬ | Переворачивает кубик на противоположную грань (сумма = 13) |
+| ГОЛЕМ | Кубик = 12; если после всех эффектов = 12, то = 1 |
+| ЧАРОДЕЙ | Переворачивает кубик на одну из прилегающих граней (выбор игрока) |
+| ОРАКУЛ | Перебрасывает кубик (срабатывает последним) |
+| ТОРГОВЦЫ | Все передают кубики по кругу влево (применяется первым) |
+| СМУТЬЯНЫ | Все переворачивают кубики на противоположную грань |
+| РЫЦАРЬ | Минимальное значение побеждает |
+| ШУЛЕР | Победитель +1 очко, второе место +2 очка |
+| ЛЕДИ | Отменяет эффекты всех остальных карт; при отмене самой ЛЕДИ — кража очков |
 
 ---
 
-#### 1.3 Выход
+## API
 
-**Запрос:**
+**Base URL:** `https://trsfl.ru/KO12`
+**Content-Type:** `application/json`
+**Авторизация:** сессионные cookie (`PHPSESSID`). Все эндпоинты кроме `auth` требуют активной сессии.
+
+Все ответы содержат поле `"success": true | false`. При ошибке добавляется `"message"`.
+
+---
+
+### Аутентификация — `POST /api/auth.php`
+
+#### Регистрация
+
+```json
+// Запрос
+{ "action": "register", "username": "ivan", "name": "Иван", "password": "secret123" }
+
+// Ответ — сессия устанавливается автоматически, клиент перенаправляется в лобби
+{ "success": true, "message": "Регистрация успешна", "redirect": "lobby.php" }
+```
+
+#### Вход
+
+```json
+// Запрос
+{ "action": "login", "username": "ivan", "password": "secret123" }
+
+// Ответ
+{ "success": true, "message": "Вход выполнен", "user": { "login": "ivan", "name": "Иван" } }
+```
+
+#### Выход
+
 ```json
 { "action": "logout" }
-```
-
-**Ответ:**
-```json
-{ "success": true }
+// → { "success": true }
 ```
 
 ---
 
-## 2. Сессии (лобби)
+### Сессии — `/api/sessions.php`
 
-### `GET /api/sessions.php?action=list`
+#### Список игр `GET ?action=list`
 
-Возвращает список доступных игровых сессий.
-
-**Ответ:**
 ```json
 {
   "success": true,
@@ -143,6 +126,7 @@
     {
       "session_id": 123,
       "session_name": "Битва Титанов",
+      "current_players": 2,
       "max_players": 4,
       "status": "waiting",
       "i_am_in": true,
@@ -152,207 +136,180 @@
 }
 ```
 
-| Поле | Описание |
-|------|----------|
-| `status` | Текущий статус лобби (например, `waiting`) |
-| `i_am_in` | true если текущий пользователь уже в этой сессии |
-| `i_am_owner` | true если текущий пользователь — владелец |
+#### Создать `POST`
 
----
-
-### `POST /api/sessions.php` — Создать сессию
-
-**Запрос:**
 ```json
-{
-  "action": "create",
-  "name": "Эпичная Игра",
-  "max_players": 4
-}
+{ "action": "create", "name": "Эпичная Игра", "max_players": 4 }
+// → { "success": true, "session_id": 124 }
 ```
 
-| Поле | Тип | Допустимые значения |
-|------|-----|---------------------|
-| `name` | string | любое название (по умолчанию "Новая игра") |
-| `max_players` | int | от 2 до 4 (по умолчанию 3) |
+`max_players` — от 2 до 4.
 
-**Ответ:**
+#### Присоединиться `POST`
+
 ```json
-{
-  "success": true,
-  "session_id": 124
-}
+{ "action": "join", "session_id": 123 }
+// → { "success": true, "session_id": 123, "rejoin": false }
+```
+
+#### Покинуть `POST`
+
+```json
+{ "action": "leave", "session_id": 123 }
+// → { "success": true, "disbanded": true,  "message": "Лобби закрыто" }   // хост ушёл
+// → { "success": true, "disbanded": false, "message": "Вы покинули лобби" }
+// → { "success": true, "disbanded": false, "message": "Игра уже идёт" }
 ```
 
 ---
 
-### `POST /api/sessions.php` — Присоединиться
+### Игра — `/api/game.php`
 
-**Запрос:**
-```json
-{
-  "action": "join",
-  "session_id": 123
-}
-```
+#### Состояние `GET ?action=state&session={id}`
 
-**Ответ:**
-```json
-{
-  "success": true,
-  "session_id": 123,
-  "rejoin": false
-}
-```
-
----
-
-### `POST /api/sessions.php` — Покинуть лобби
-
-**Запрос:**
-```json
-{
-  "action": "leave",
-  "session_id": 123
-}
-```
-
-**Ответ:**
-```json
-{ "success": true, "disbanded": true,  "message": "Лобби закрыто" }
-{ "success": true, "disbanded": false, "message": "Вы покинули лобби" }
-{ "success": true, "disbanded": false, "message": "Игра уже идёт" }
-```
-
----
-
-## 3. Игровой процесс
-
-### `GET /api/game.php?action=state&session={id}`
-
-Возвращает полное состояние игры.
-
-**Ответ:**
 ```json
 {
   "success": true,
   "state": {
-    "session": { "id_session": 123, "status": "active", ... },
-    "players": [ { "id_player": 1, "login": "player1", ... } ],
-    "current_round": { "id_round": 10, "round_number": 1, ... },
-    "current_play": { "id_play": 50, "status": "card_selection", ... },
-    "dice_rolls": [ { "id_player": 1, "final_value": 5, ... } ],
-    "selected_cards": [ { "id_player": 1, "id_card": 7, ... } ],
+    "session": {
+      "id_session": 123,
+      "status": "active",
+      "max_players": 3,
+      "lobby_countdown_sec": 17
+    },
+    "players": [
+      {
+        "id_player": 1,
+        "login": "ivan",
+        "name": "Иван",
+        "round_victory_points": 3,
+        "cards_under_dice": 1,
+        "is_owner": true
+      }
+    ],
+    "current_round":  { "id_round": 10, "round_number": 2, "status": "active" },
+    "current_play":   { "id_play": 50, "play_number": 3, "status": "card_selection" },
+    "dice_rolls":     [ { "id_player": 1, "base_value": 7, "final_value": 14, "is_canceled": false } ],
+    "selected_cards": [ { "id_player": 1, "id_card": 5, "is_canceled": false } ],
     "wizard_choices": [ { "id_player": 1, "chosen_face": 6 } ],
-    "your_cards": [ { "card_id": 5, "card_name": "Рыцарь", "is_available": true, ... } ]
+    "your_cards": [
+      { "card_id": 5, "card_name": "АЛХИМИК", "card_description": "...", "is_available": true }
+    ]
   }
 }
 ```
 
----
+`lobby_countdown_sec` — оставшееся время отсчёта в секундах (вычисляется на сервере), `null` если игроков меньше 2.
 
-### `GET /api/game.php?action=log&session={id}`
+Статусы `current_play.status`:
 
-Возвращает хронологический лог событий игры.
+| Значение | Описание |
+|---|---|
+| `card_selection` | Игроки выбирают карты |
+| `processing` | Сервер обрабатывает розыгрыш |
+| `awaiting_wizard` | Ожидание выбора грани от игрока с ЧАРОДЕЙ |
 
-**Ответ:**
+#### Лог `GET ?action=log&session={id}`
+
 ```json
 {
   "success": true,
   "log": [
-    "Игрок Иван выбрал карту Рыцарь",
-    "..."
+    { "log_time": "2025-01-01 12:00:05", "event_msg": "🎲 Иван бросил 9" },
+    { "log_time": "2025-01-01 12:00:06", "event_msg": "🃏 Иван сыграл АЛХИМИК" }
   ]
 }
 ```
 
----
+#### Начать игру `POST`
 
-### `POST /api/game.php` — Начать игру
+Только для владельца сессии.
 
-Только владелец сессии.
-
-**Запрос:**
 ```json
-{
-  "action": "start_game",
-  "session_id": 123
-}
+{ "action": "start_game", "session_id": 123 }
+// → { "success": true,  "message": "Игра началась" }
+// → { "success": false, "message": "Недостаточно игроков (минимум 2)" }
 ```
 
-**Ответ:**
+#### Выбрать карту `POST`
+
 ```json
-{ "success": true, "message": "Игра началась" }
+{ "action": "select_card", "session_id": 123, "card_id": 7 }
+// → { "success": true, "message": "Карта выбрана" }
 ```
 
-**Ошибки:**
+Как только все игроки выбрали карты, сервер автоматически запускает `process_play`.
+
+#### Выбор грани ЧАРОДЕЙ `POST`
+
+Требуется когда `current_play.status = "awaiting_wizard"` и текущий игрок сыграл ЧАРОДЕЙ.
+
 ```json
-{ "success": false, "message": "Недостаточно игроков (минимум 2)" }
+{ "action": "wizard_choice", "session_id": 123, "play_id": 50, "chosen_face": 6 }
+// → { "success": true, "message": "Грань 6 выбрана" }
 ```
 
----
+`chosen_face` должна быть одной из пяти граней, прилегающих к текущей верхней грани кубика. Клиентская функция `getAdjacentFacesD12(face)` возвращает допустимые значения.
 
-### `POST /api/game.php` — Выбрать карту
+#### Heartbeat `POST /api/heartbeat.php`
 
-**Запрос:**
+Клиент отправляет каждые 30 секунд. Обновляет `last_seen` игрока.
+
 ```json
-{
-  "action": "select_card",
-  "session_id": 123,
-  "card_id": 7
-}
+{ "session_id": 123 }
+// → { "success": true }
 ```
 
-**Ответ:**
-```json
-{ "success": true, "message": "Карта выбрана" }
-```
-
----
-
-### `POST /api/game.php` — Выбор грани (карта ЧАРОДЕЙ)
-
-**Запрос:**
-```json
-{
-  "action": "wizard_choice",
-  "session_id": 123,
-  "play_id": 50,
-  "chosen_face": 6
-}
-```
-
-| Поле | Описание |
-|------|----------|
-| `play_id` | ID текущего розыгрыша |
-| `chosen_face` | Выбранная грань (1–12) |
-
-**Ответ:**
-```json
-{ "success": true, "message": "Грань 6 выбрана" }
-```
+При отсутствии более 90 секунд игрок удаляется из лобби; если пропал хост — сессия удаляется целиком.
 
 ---
 
-## 4. Типовой сценарий взаимодействия
+### Типовой сценарий
 
 ```
-1. POST /api/auth.php           { action: "login", ... }
-2. GET  /api/sessions.php?action=list
-3. POST /api/sessions.php       { action: "create", name: "...", max_players: 4 }
-   -- другие игроки:
-4. POST /api/sessions.php       { action: "join", session_id: 123 }
-   -- владелец:
-5. POST /api/game.php           { action: "start_game", session_id: 123 }
-   -- игровой цикл (polling):
-6. GET  /api/game.php?action=state&session=123
-7. POST /api/game.php           { action: "select_card", session_id: 123, card_id: 7 }
-   -- если выпал ЧАРОДЕЙ:
-8. POST /api/game.php           { action: "wizard_choice", ..., chosen_face: 6 }
-   -- лог:
-9. GET  /api/game.php?action=log&session=123
+POST /api/auth.php          { action: "register", ... }   # авто-вход после регистрации
+GET  /api/sessions.php?action=list
+POST /api/sessions.php      { action: "create", name: "...", max_players: 3 }
+
+# другие игроки:
+POST /api/sessions.php      { action: "join", session_id: 123 }
+
+# lobby_countdown_sec отсчитывает → 0, хост запускает старт (или авто):
+POST /api/game.php          { action: "start_game", session_id: 123 }
+
+# игровой цикл (polling каждые 2 сек):
+GET  /api/game.php?action=state&session=123
+POST /api/game.php          { action: "select_card", session_id: 123, card_id: 7 }
+
+# если выпал ЧАРОДЕЙ:
+POST /api/game.php          { action: "wizard_choice", play_id: 50, chosen_face: 6 }
+
+# лог (polling каждые 4 сек):
+GET  /api/game.php?action=log&session=123
 ```
 
 ---
 
-*Стек: PHP-сессии (cookie `PHPSESSID`), формат JSON.*
+## Технические детали
+
+### Синхронизация таймера лобби
+
+`Sessions.lobby_ready_at` устанавливается в БД в момент, когда число игроков достигает 2 (`COALESCE(lobby_ready_at, NOW())` — не перезаписывается при повторных join, не сбрасывается при перезагрузке страниц). Оставшееся время считается целиком в PostgreSQL:
+
+```sql
+GREATEST(0, 30 - EXTRACT(EPOCH FROM (NOW() - lobby_ready_at))::INT)
+```
+
+Это исключает проблемы с timezone (`TIMESTAMP WITHOUT TIME ZONE`): оба операнда в одном контексте сервера БД. Клиент получает готовое число секунд и интерполирует его через `requestAnimationFrame` между poll-ами для плавной анимации полоски.
+
+### Heartbeat и очистка зависших сессий
+
+`GET /api/sessions.php?action=list` перед выдачей списка вызывает `cleanup_inactive_players()` (удаляет игроков с `last_seen > 90 сек`) и `cleanup_abandoned_sessions()` (удаляет пустые waiting-сессии старше 3 минут). Это гарантирует очистку зависших лобби от закрытых вкладок при следующем заходе любого пользователя.
+
+### Обработка карты ЧАРОДЕЙ
+
+При сыгранном ЧАРОДЕЕ `process_play` переводит розыгрыш в статус `awaiting_wizard` и возвращает управление клиенту. Клиент обнаруживает статус при следующем poll и показывает модальное окно с выбором прилегающей грани. После ответа всех ЧАРОДЕЙ-игроков PHP вызывает `finish_process_play`.
+
+### Попап выбора карты
+
+Координаты карты снимаются через `getBoundingClientRect()` **до** вызова `updateYourHand()`, который перерисовывает DOM и уничтожает исходный элемент. Попап позиционируется через `left = центр карты` + `transform: translateX(-50%)` — без необходимости измерять ширину самого попапа. На мобильных (≤ 640px) попап фиксируется внизу экрана.
